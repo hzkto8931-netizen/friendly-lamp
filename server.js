@@ -468,13 +468,24 @@ app.post('/api/payment', (req, res) => {
 
         console.log(`🔳 QR-оплата от ${fromUserId} в "${storeName}": ${amount} ₽`);
 
-        // Уведомляем клиента через WebSocket
+        // --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
+        // Отправляем сообщение о подтверждении оплаты ТОЛЬКО нужной кассе
+        console.log(`📢 Отправка подтверждения на кассу с ID: ${kassaId}`);
+        io.to(kassaId).emit('payment_successful', { 
+            status: 'ok',
+            amount: amount,
+            userId: fromUserId,
+            transactionId: transaction.id 
+        });
+
+        // Уведомляем и самого клиента об изменении баланса
         io.to(fromUserId).emit('balance_updated', {
             userId: fromUserId,
             balance: newBalance,
             transaction: transaction
         });
 
+        // Отвечаем мобильному приложению, что все прошло успешно
         res.json({
             success: true,
             newBalance: newBalance,
@@ -492,17 +503,18 @@ app.post('/api/payment', (req, res) => {
 io.on('connection', (socket) => {
     console.log(`🔌 Новое подключение: ${socket.id}`);
     
-    socket.on('join', (userId) => {
-        // Сохраняем userId в объекте сокета
-        socket.userId = userId;
-        socket.join(userId);
-        console.log(`👤 Пользователь ${userId} присоединился`);
+    // Этот обработчик теперь используется и кассой, и клиентами
+    socket.on('join', (id) => {
+        // Сохраняем id в объекте сокета
+        socket.userId = id;
+        socket.join(id); // <--- КЛЮЧЕВАЯ КОМАНДА
+        console.log(`👤 Пользователь или касса с ID [${id}] присоединился к своей комнате`);
         
-        // Отправляем текущий баланс
-        const user = db.get(`users/${userId}`);
+        // Если это обычный пользователь, отправляем ему баланс
+        const user = db.get(`users/${id}`);
         if (user) {
             socket.emit('balance_updated', {
-                userId: userId,
+                userId: id,
                 balance: user.balance || 0
             });
         }
@@ -581,3 +593,4 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+
