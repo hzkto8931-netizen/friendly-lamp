@@ -432,11 +432,12 @@ app.post('/api/transfer', (req, res) => {
 });
 
 app.post('/api/payment', (req, res) => {
-    const { fromUserId, storeName, amount } = req.body;
+    // 1. ИСПРАВЛЕНИЕ: Достаем kassaId из тела запроса
+    const { fromUserId, storeName, amount, kassaId } = req.body;
 
-    // Валидация
-    if (!fromUserId || !storeName || !amount) {
-        return res.status(400).json({ success: false, error: 'Не указаны обязательные параметры' });
+    // 2. ИСПРАВЛЕНИЕ: Добавляем kassaId в проверку
+    if (!fromUserId || !storeName || !amount || !kassaId) {
+        return res.status(400).json({ success: false, error: 'Не указаны обязательные параметры (включая kassaId)' });
     }
     if (amount <= 0) {
         return res.status(400).json({ success: false, error: 'Сумма должна быть положительной' });
@@ -448,19 +449,17 @@ app.post('/api/payment', (req, res) => {
             return res.status(400).json({ success: false, error: 'Недостаточно средств' });
         }
 
-        // Выполняем транзакцию
         const newBalance = db.transaction(`users/${fromUserId}/balance`, (currentBalance) => {
             return (currentBalance || 0) - amount;
         });
 
-        // Создаем запись о транзакции
         const transaction = {
             id: 'tx_' + Date.now() + '_qr_' + Math.random().toString(36).substr(2, 5),
             userId: fromUserId,
             type: 'qr_payment',
             amount: -amount,
             timestamp: new Date().toISOString(),
-            description: `Оплата в "${storeName}"`
+            description: `Оплата в "${storeName}" (Касса: ${kassaId})`
         };
         const transactions = db.get('transactions') || [];
         transactions.push(transaction);
@@ -468,8 +467,7 @@ app.post('/api/payment', (req, res) => {
 
         console.log(`🔳 QR-оплата от ${fromUserId} в "${storeName}": ${amount} ₽`);
 
-        // --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
-        // Отправляем сообщение о подтверждении оплаты ТОЛЬКО нужной кассе
+        // Теперь переменная kassaId существует и здесь всё сработает
         console.log(`📢 Отправка подтверждения на кассу с ID: ${kassaId}`);
         io.to(kassaId).emit('payment_successful', { 
             status: 'ok',
@@ -593,4 +591,5 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+
 
