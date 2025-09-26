@@ -151,6 +151,7 @@ const db = new SimpleDatabase();
 
 // Инициализация начальных данных
 console.log('🚀 Инициализация базы данных...');
+console.log('qr version');
 
 // API Routes
 
@@ -429,6 +430,63 @@ app.post('/api/transfer', (req, res) => {
         });
     }
 });
+
+app.post('/api/payment', (req, res) => {
+    const { fromUserId, storeName, amount } = req.body;
+
+    // Валидация
+    if (!fromUserId || !storeName || !amount) {
+        return res.status(400).json({ success: false, error: 'Не указаны обязательные параметры' });
+    }
+    if (amount <= 0) {
+        return res.status(400).json({ success: false, error: 'Сумма должна быть положительной' });
+    }
+
+    try {
+        const fromUser = db.get(`users/${fromUserId}`);
+        if (!fromUser || fromUser.balance < amount) {
+            return res.status(400).json({ success: false, error: 'Недостаточно средств' });
+        }
+
+        // Выполняем транзакцию
+        const newBalance = db.transaction(`users/${fromUserId}/balance`, (currentBalance) => {
+            return (currentBalance || 0) - amount;
+        });
+
+        // Создаем запись о транзакции
+        const transaction = {
+            id: 'tx_' + Date.now() + '_qr_' + Math.random().toString(36).substr(2, 5),
+            userId: fromUserId,
+            type: 'qr_payment',
+            amount: -amount,
+            timestamp: new Date().toISOString(),
+            description: `Оплата в "${storeName}"`
+        };
+        const transactions = db.get('transactions') || [];
+        transactions.push(transaction);
+        db.set('transactions', transactions);
+
+        console.log(`🔳 QR-оплата от ${fromUserId} в "${storeName}": ${amount} ₽`);
+
+        // Уведомляем клиента через WebSocket
+        io.to(fromUserId).emit('balance_updated', {
+            userId: fromUserId,
+            balance: newBalance,
+            transaction: transaction
+        });
+
+        res.json({
+            success: true,
+            newBalance: newBalance,
+            transaction: transaction
+        });
+
+    } catch (error) {
+        console.error('Ошибка при QR-оплате:', error);
+        res.status(500).json({ success: false, error: 'Внутренняя ошибка сервера' });
+    }
+});
+
 
 // WebSocket обработчики
 io.on('connection', (socket) => {
